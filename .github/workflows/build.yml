@@ -1,0 +1,61 @@
+name: Build APK
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # The runner image already ships the Android SDK; android-actions/setup-android
+      # now fails there trying to install the retired "tools" package.
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Run unit tests
+        run: gradle testDebugUnitTest --stacktrace
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: app/build/reports/tests/
+
+      - name: Build debug APK
+        run: gradle assembleDebug --stacktrace
+
+      # Exercises R8 and resource shrinking, which the debug build skips. Without
+      # signing credentials this produces an unsigned APK, which is fine — the
+      # point is to catch release-only breakage here rather than at tag time.
+      - name: Build unsigned release APK (verifies minification)
+        run: gradle assembleRelease --stacktrace
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk "out/devbridge-${GITHUB_SHA::7}.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: devbridge-apk
+          path: out/*.apk
+          if-no-files-found: error

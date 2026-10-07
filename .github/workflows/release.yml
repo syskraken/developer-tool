@@ -1,0 +1,112 @@
+name: Release APK
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version name, e.g. 1.0.0"
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # The runner image already ships the Android SDK; android-actions/setup-android
+      # now fails there trying to install the retired "tools" package.
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Determine version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          echo "VERSION_NAME=$VERSION" >> "$GITHUB_ENV"
+          # run_number only ever increases, which is what Android requires of versionCode.
+          echo "VERSION_CODE=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "Building version $VERSION (code ${GITHUB_RUN_NUMBER})"
+
+      - name: Restore keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Secret KEYSTORE_BASE64 is not set. See README, 'Signing your own release'."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/release.jks"
+          if [ ! -s "$RUNNER_TEMP/release.jks" ]; then
+            echo "::error::Decoded keystore is empty; KEYSTORE_BASE64 is probably malformed."
+            exit 1
+          fi
+
+      - name: Run unit tests
+        run: gradle testReleaseUnitTest --stacktrace
+
+      - name: Build signed release APK
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle requireReleaseSigning assembleRelease --stacktrace
+
+      - name: Verify the APK is properly signed
+        run: |
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          echo "Using $APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs \
+            app/build/outputs/apk/release/app-release.apk
+
+      - name: Stage the APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk \
+             "out/devbridge-${VERSION_NAME}.apk"
+          sha256sum "out/devbridge-${VERSION_NAME}.apk" \
+            > "out/devbridge-${VERSION_NAME}.apk.sha256"
+          ls -lh out/
+
+      - name: Upload APK as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: devbridge-release-${{ env.VERSION_NAME }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: Create draft GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: DevBridge ${{ env.VERSION_NAME }}
+          files: out/*
+          body: |
+            Signed release build of DevBridge ${{ env.VERSION_NAME }}.
+
+            Controller app for another Android phone over ADB (USB or network):
+            remote control, hardware check, permission analysis, hidden-app audit
+            and an ADB shell.
+
+            Verify the download against the published `.sha256` before installing.
+
+      - name: Remove the keystore from the runner
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
