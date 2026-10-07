@@ -175,4 +175,30 @@ class AdbConnectionTest {
         try { AdbCodec.decodeHeader(header); fail() } catch (e: AdbException) { /* expected */ }
         assertArrayEquals(byteArrayOf(0, 0, 0, 0), ByteArray(4))
     }
+
+    @Test
+    fun streamDeliversChunksLiveAndStopsWhenClosed() {
+        val closed = java.util.concurrent.CountDownLatch(1)
+        device { sock ->
+            val input = sock.getInputStream()
+            input.message()
+            sock.send(AdbMessage(Adb.A_CNXN, Adb.VERSION, 4096, "device::".toByteArray()))
+            val open = input.message()
+            sock.send(AdbMessage(Adb.A_OKAY, 9, open.arg0))
+            sock.send(AdbMessage(Adb.A_WRTE, 9, open.arg0, byteArrayOf(1, 2)))
+            input.message()                                                // OKAY for first chunk
+            sock.send(AdbMessage(Adb.A_WRTE, 9, open.arg0, byteArrayOf(3)))
+            input.message()
+            if (input.message().command == Adb.A_CLSE) closed.countDown() // client stops the stream
+        }
+        val c = connection()
+        c.connect(5000)
+        val stream = c.open("exec:screenrecord --output-format=h264 -")
+        assertArrayEquals(byteArrayOf(1, 2), stream.read(2000))
+        assertArrayEquals(byteArrayOf(3), stream.read(2000))
+        assertEquals(null, stream.read(50))
+        stream.close()
+        assertTrue(closed.await(3, java.util.concurrent.TimeUnit.SECONDS))
+        c.close()
+    }
 }

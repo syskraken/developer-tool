@@ -21,7 +21,7 @@ class AdbConnection(
     private val keyComment: String = "devbridge@android",
 ) : Closeable {
 
-    private class Stream {
+    internal class Stream {
         val chunks = LinkedBlockingQueue<ByteArray>()
         val opened = CountDownLatch(1)
         @Volatile var remoteId = 0
@@ -86,35 +86,71 @@ class AdbConnection(
         }
     }
 
-    /** Runs a service and returns everything it printed. Binary safe when `exec:` is available. */
-    fun run(service: String, timeoutMs: Int = 20_000): ByteArray {
+    /** A live service stream: read chunks as they arrive, close to stop the service on the device. */
+    inner class AdbStream internal constructor(
+        private val localId: Int,
+        private val stream: Stream,
+    ) : Closeable {
+
+        @Volatile var eof = false
+            private set
+
+        /**
+         * Next chunk, or null if none arrived within [timeoutMs]. At end of
+         * stream returns an empty array and [eof] becomes true.
+         */
+        fun read(timeoutMs: Long): ByteArray? {
+            if (eof) return EOF
+            val chunk = stream.chunks.poll(timeoutMs, TimeUnit.MILLISECONDS) ?: return null
+            if (chunk === EOF) eof = true
+            return chunk
+        }
+
+        override fun close() {
+            val removed = streams.remove(localId)
+            if (removed != null && removed.remoteId != 0 && !isClosed) {
+                try { send(AdbMessage(Adb.A_CLSE, localId, removed.remoteId)) } catch (e: IOException) { /* gone */ }
+            }
+            eof = true
+        }
+    }
+
+    /** Starts a service (for example `exec:screenrecord ...`) and returns a stream to read it. */
+    fun open(service: String, timeoutMs: Int = 20_000): AdbStream {
         if (isClosed) throw AdbException("Not connected")
         val localId = nextId.getAndIncrement()
         val stream = Stream()
         streams[localId] = stream
-
+        val handle = AdbStream(localId, stream)
         try {
             send(AdbMessage(Adb.A_OPEN, localId, 0, "$service\u0000".toByteArray()))
             if (!stream.opened.await(timeoutMs.toLong(), TimeUnit.MILLISECONDS)) {
                 throw AdbException("Device did not answer '$service'")
             }
             if (stream.rejected) throw AdbException("Device refused '$service'")
+        } catch (e: Exception) {
+            handle.close()
+            throw e
+        }
+        return handle
+    }
 
+    /** Runs a service and returns everything it printed. Binary safe when `exec:` is available. */
+    fun run(service: String, timeoutMs: Int = 20_000): ByteArray {
+        val stream = open(service, timeoutMs)
+        try {
             val out = ByteArrayOutputStream()
             val deadline = System.currentTimeMillis() + timeoutMs
             while (true) {
                 val wait = deadline - System.currentTimeMillis()
                 if (wait <= 0) throw AdbException("Timed out running '$service'")
-                val chunk = stream.chunks.poll(wait, TimeUnit.MILLISECONDS) ?: continue
-                if (chunk === EOF) break
+                val chunk = stream.read(wait) ?: continue
+                if (stream.eof) break
                 out.write(chunk)
             }
             return out.toByteArray()
         } finally {
-            val removed = streams.remove(localId)
-            if (removed != null && removed.remoteId != 0 && !isClosed) {
-                try { send(AdbMessage(Adb.A_CLSE, localId, removed.remoteId)) } catch (e: IOException) { /* gone */ }
-            }
+            stream.close()
         }
     }
 

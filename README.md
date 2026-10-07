@@ -8,7 +8,7 @@ You install DevBridge on a **working** phone (the controller) and connect it to 
 
 | Feature | How it works |
 |---|---|
-| **Remote control** | Mirrors the target's screen (`screencap`) and sends taps, swipes, long-presses, keys and text (`input`). Works with a dead panel. Includes wake, lock-screen PIN entry, and Back / Home / Recents / Power / volume. |
+| **Remote control** | **Live video** like scrcpy: the phone's `screenrecord` H.264 stream is decoded in hardware and drawn in real time, with touches sent as you drag (Android 12+ gets true live dragging via `input motionevent`; older phones get taps and swipes when you lift). Falls back to screenshots if live video isn't available (**Live: off**). Works with a dead panel. Includes wake, lock-screen PIN entry, Back / Home / Recents / Power / volume, and text entry. |
 | **Flip cover screen** | Set the *input display* (usually `1`) and, optionally, the *screencap id*; **Detect** lists them. **Launch app** starts a package on that display (`am start --display`). Best-effort: it depends on the manufacturer allowing apps on the cover display. |
 | **Hardware check** | Model, Android/patch level, bootloader state, battery level/health/temperature, memory, storage, display, CPU, sensors, cameras/NFC/fingerprint/OTG, radios. Flags overheating, low storage, unlocked bootloader. |
 | **Permission analysis** | Reads the permissions each third-party app actually holds (`dumpsys package`) and scores them, calling out SMS, call log, microphone, background location, accessibility, device admin, install-apps and more. |
@@ -35,8 +35,8 @@ DevBridge only controls a phone that has explicitly authorised it (USB debugging
 
 ## Limits
 
-- Screen mirroring polls screenshots, so expect a few frames per second, not video.
-- `input` can't simulate multi-touch.
+- Live video uses `screenrecord`, which the phone limits to 3 minutes per run, so the picture freezes for about a second every ~170 s while it restarts. It also can't show protected content (some banking apps, DRM video), and after a rotation you need to tap **↻**.
+- Touch goes through Android's `input` command, which starts a process per event, so there is some input lag (typically 100–300 ms) and no multi-touch or pinch. scrcpy avoids this by running its own small server on the phone; DevBridge doesn't do that yet.
 - Analysis relies on `dumpsys`/`pm` output, which varies between Android versions and manufacturers; sections degrade to "not reported" rather than failing.
 
 ## Building
