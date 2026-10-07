@@ -26,6 +26,8 @@ class AdbConnection(
         val opened = CountDownLatch(1)
         @Volatile var remoteId = 0
         @Volatile var rejected = false
+        /** One permit: the device must acknowledge each WRTE before the next is sent. */
+        val writeAck = java.util.concurrent.Semaphore(1)
     }
 
     private val sendLock = Any()
@@ -42,6 +44,9 @@ class AdbConnection(
     /** Cleared if the device refuses `exec:` (very old Android), after which `shell:` is used. */
     @Volatile private var execSupported = true
 
+    /** Largest payload the device accepts in one WRTE. */
+    @Volatile private var maxData = 4096
+
     /**
      * Handshake and authentication. [onAuthPrompt] fires when the device wants
      * the user to approve this key on its screen; [authTimeoutMs] is how long
@@ -57,6 +62,7 @@ class AdbConnection(
                 when (m.command) {
                     Adb.A_CNXN -> {
                         banner = String(m.data, Charsets.UTF_8).trimEnd('\u0000')
+                        maxData = m.arg1.coerceIn(4096, 64 * 1024)
                         break
                     }
                     Adb.A_AUTH -> if (m.arg0 == Adb.AUTH_TOKEN) {
@@ -104,6 +110,23 @@ class AdbConnection(
             val chunk = stream.chunks.poll(timeoutMs, TimeUnit.MILLISECONDS) ?: return null
             if (chunk === EOF) eof = true
             return chunk
+        }
+
+        /** Sends [data] to the service's stdin, waiting for the device to accept each chunk. */
+        fun write(data: ByteArray) {
+            var offset = 0
+            while (offset < data.size) {
+                if (eof || isClosed) throw IOException("Stream closed")
+                if (!stream.writeAck.tryAcquire(10, TimeUnit.SECONDS)) throw IOException("Device stopped accepting data")
+                val n = minOf(maxData, data.size - offset)
+                try {
+                    send(AdbMessage(Adb.A_WRTE, localId, stream.remoteId, data.copyOfRange(offset, offset + n)))
+                } catch (e: IOException) {
+                    stream.writeAck.release()
+                    throw e
+                }
+                offset += n
+            }
         }
 
         override fun close() {
@@ -195,11 +218,13 @@ class AdbConnection(
                         if (it.remoteId == 0) {
                             it.remoteId = m.arg0
                             it.opened.countDown()
+                        } else {
+                            it.writeAck.release()
                         }
                     }
                     Adb.A_WRTE -> {
                         val stream = streams[m.arg1]
-                        stream?.chunks?.put(m.data)
+                        stream?.chunks?.offer(m.data)
                         send(AdbMessage(Adb.A_OKAY, m.arg1, m.arg0))
                     }
                     Adb.A_CLSE -> streams[m.arg1]?.let {
@@ -207,7 +232,7 @@ class AdbConnection(
                             it.rejected = true
                             it.opened.countDown()
                         }
-                        it.chunks.put(EOF)
+                        it.chunks.offer(EOF)
                     }
                     else -> { /* not meaningful once connected */ }
                 }
@@ -219,7 +244,7 @@ class AdbConnection(
             for (stream in streams.values) {
                 stream.rejected = stream.remoteId == 0
                 stream.opened.countDown()
-                stream.chunks.put(EOF)
+                stream.chunks.offer(EOF)
             }
         }
     }
