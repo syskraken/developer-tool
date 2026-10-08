@@ -23,6 +23,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import dev.franklin.devbridge.Session
 import dev.franklin.devbridge.adb.AdbConnection
+import dev.franklin.devbridge.aoa.AoaHolder
+import dev.franklin.devbridge.aoa.AoaSession
+import dev.franklin.devbridge.aoa.UsbControl
 import dev.franklin.devbridge.adb.AdbException
 import dev.franklin.devbridge.adb.TcpTransport
 import dev.franklin.devbridge.adb.UsbTransport
@@ -79,6 +82,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** True while a USB permission request is for the touchpad/keyboard rather than for ADB. */
+    private var pendingInput = false
+
     private val usbPermission = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val device: UsbDevice? = if (Build.VERSION.SDK_INT >= 33) {
@@ -87,7 +93,7 @@ class MainActivity : AppCompatActivity() {
                 @Suppress("DEPRECATION") intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
             }
             if (device != null && intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-                connectUsb(device)
+                useUsb(device)
             } else {
                 setStatus("USB permission was denied.")
             }
@@ -122,7 +128,16 @@ class MainActivity : AppCompatActivity() {
         connect.addView(button("Connect over network") { connectTcp() })
 
         connect.spaced(label("USB cable (OTG)", 16f, bold = true), 20)
-        connect.addView(button("Connect over USB") { chooseUsb() })
+        connect.addView(button("Connect over USB") { chooseUsb(forInput = false) })
+        connect.addView(button("Touchpad & keyboard (no USB debugging needed)") { chooseUsb(forInput = true) })
+        connect.spaced(
+            label(
+                "For a phone whose touch screen is dead: use this working phone as its mouse and keyboard to tap " +
+                    "Allow on the USB debugging prompt.",
+                12f,
+            ),
+            4,
+        )
 
         connect.spaced(label("Trusted key", 16f, bold = true), 20)
         connect.addView(button("Import adbkey…") { importKey.launch(arrayOf("*/*")) })
@@ -347,14 +362,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun chooseUsb() {
+    private fun chooseUsb(forInput: Boolean) {
+        pendingInput = forInput
         val manager = getSystemService(Context.USB_SERVICE) as UsbManager
-        val devices = manager.deviceList.values.filter { UsbTransport.findInterface(it) != null }
+        // Mouse/keyboard input works with any attached phone; ADB needs one that exposes the ADB interface.
+        val devices = manager.deviceList.values.filter { forInput || UsbTransport.findInterface(it) != null }
         when {
             devices.isEmpty() -> {
                 val seen = manager.deviceList.size
                 toast(
-                    if (seen == 0) "No USB device found. Use an OTG adapter, and turn on USB debugging on the other phone."
+                    if (seen == 0) "No USB device found. Use an OTG adapter, and make sure this phone is the USB host (see the README)."
                     else "$seen USB device(s) found but none exposes ADB. Turn on USB debugging on the other phone.",
                 )
             }
@@ -367,10 +384,41 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestUsb(manager: UsbManager, device: UsbDevice) {
-        if (manager.hasPermission(device)) { connectUsb(device); return }
+        if (manager.hasPermission(device)) { useUsb(device); return }
         val intent = Intent(ACTION_USB_PERMISSION).setPackage(packageName)
         val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
         manager.requestPermission(device, PendingIntent.getBroadcast(this, 0, intent, flags))
+    }
+
+    private fun useUsb(device: UsbDevice) {
+        if (pendingInput) startInput(device) else connectUsb(device)
+    }
+
+    private fun startInput(device: UsbDevice) {
+        setStatus("Starting touchpad & keyboard…")
+        worker.execute {
+            val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+            val connection = manager.openDevice(device)
+            if (connection == null) {
+                setStatus("Could not open the USB device.")
+                return@execute
+            }
+            val control = UsbControl(connection)
+            val session = AoaSession(control)
+            try {
+                session.start()
+            } catch (e: Exception) {
+                control.close()
+                setStatus("Touchpad unavailable: ${e.message}")
+                return@execute
+            }
+            val name = device.productName ?: "USB device"
+            AoaHolder.set(session, control, name)
+            ui.post {
+                setStatus("Touchpad & keyboard ready for $name")
+                startActivity(Intent(this, TouchpadActivity::class.java))
+            }
+        }
     }
 
     private fun connectUsb(device: UsbDevice) {
