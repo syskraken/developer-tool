@@ -27,6 +27,7 @@ val releaseKeyPassword = signingValue("KEY_PASSWORD", "keyPassword")
 // Without every credential present the release build stays unsigned rather than
 // failing, so `assembleRelease` still works for anyone without the keystore.
 val canSignRelease = releaseStoreFile != null &&
+    file(releaseStoreFile).exists() &&
     releaseStorePassword != null &&
     releaseKeyAlias != null &&
     releaseKeyPassword != null
@@ -61,6 +62,11 @@ android {
     val releaseSigningConfig = if (canSignRelease) signingConfigs.getByName("release") else null
 
     buildTypes {
+        // Test builds use the same key as releases when it is available (CI). A new debug key per
+        // build would make each APK refuse to install over the previous one, forcing an uninstall.
+        debug {
+            signingConfig = releaseSigningConfig
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

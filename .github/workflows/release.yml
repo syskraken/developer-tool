@@ -39,8 +39,8 @@ jobs:
           VERSION="${{ github.event.inputs.version }}"
           if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
           echo "VERSION_NAME=$VERSION" >> "$GITHUB_ENV"
-          # run_number only ever increases, which is what Android requires of versionCode.
-          echo "VERSION_CODE=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          # A timestamp shares one ever-increasing scale with the CI test builds (run numbers are per workflow).
+          echo "VERSION_CODE=$(date +%s)" >> "$GITHUB_ENV"
           echo "Building version $VERSION (code ${GITHUB_RUN_NUMBER})"
 
       - name: Restore keystore

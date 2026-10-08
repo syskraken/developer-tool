@@ -108,6 +108,11 @@ object Updater {
     private fun startInstall(context: Context, apk: File) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        // Android 12+ may then skip the confirmation for an update to an app this installer already manages;
+        // when it can't, it still asks as before.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+        }
         val sessionId = installer.createSession(params)
 
         installer.openSession(sessionId).use { session ->
@@ -141,6 +146,9 @@ object Updater {
 
     private fun friendly(message: String?): String = when {
         message == null -> "Install cancelled"
+        message.contains("DOWNGRADE", ignoreCase = true) ->
+            "This copy is newer than the release (it is probably a test build), so Android won't replace it. " +
+                "Uninstall DevBridge to go back to the release."
         message.contains("INCOMPATIBLE", ignoreCase = true) || message.contains("signature", ignoreCase = true) ->
             "This copy was signed with a different key (for example a debug build from CI). " +
                 "Uninstall DevBridge, then install the release APK."
