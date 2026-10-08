@@ -54,6 +54,9 @@ object Session {
         return key
     }
 
+    /** The current key as PEM text, ready to save; creates one first if the app has none yet. */
+    fun exportKey(context: Context): String = loadKey(context).toPem()
+
     fun importKey(context: Context, pem: String) {
         val key = AdbKey.fromPem(pem)       // validates before overwriting the working key
         keyFile(context).writeText(key.toPem())

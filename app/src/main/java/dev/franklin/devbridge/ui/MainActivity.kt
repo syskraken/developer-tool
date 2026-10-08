@@ -67,6 +67,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val exportKey = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri == null) return@registerForActivityResult
+        try {
+            val pem = Session.exportKey(this)
+            contentResolver.openOutputStream(uri, "wt")?.use { it.write(pem.toByteArray(Charsets.UTF_8)) }
+                ?: throw IllegalStateException("could not open the file")
+            toast("Key saved. Keep that file private.")
+        } catch (e: Exception) {
+            toast("Export failed: ${e.message}")
+        }
+    }
+
     private val usbPermission = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val device: UsbDevice? = if (Build.VERSION.SDK_INT >= 33) {
@@ -114,6 +126,14 @@ class MainActivity : AppCompatActivity() {
 
         connect.spaced(label("Trusted key", 16f, bold = true), 20)
         connect.addView(button("Import adbkey…") { importKey.launch(arrayOf("*/*")) })
+        connect.addView(button("Export key…") { confirmExport() })
+        connect.spaced(
+            label(
+                "Phones that approved this key will not ask again. Export it before uninstalling so you can import it back afterwards.",
+                12f,
+            ),
+            4,
+        )
 
         // --- tools + updates pane ----------------------------------------------------------------------
         tools = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -194,6 +214,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun report(mode: String) =
         startActivity(Intent(this, ReportActivity::class.java).putExtra(ReportActivity.EXTRA_MODE, mode))
+
+    private fun confirmExport() {
+        AlertDialog.Builder(this)
+            .setTitle("Save your key")
+            .setMessage(
+                "This file is the key every phone you approved trusts. Anyone who has it can connect to those phones " +
+                    "(USB debugging must still be on). Save it somewhere private, not in a shared folder or chat.",
+            )
+            .setPositiveButton("Save…") { _, _ -> exportKey.launch("devbridge-adbkey.pem") }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
 
     // --- updates -------------------------------------------------------------------------------------------
 

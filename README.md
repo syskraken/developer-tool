@@ -35,6 +35,8 @@ ADB asks the target to approve a new controller **on its screen**, which you can
 - **Import a key it already trusts.** If the phone was ever connected to a computer with ADB and "Always allow" was ticked, copy that computer's `~/.android/adbkey` (Windows: `C:\Users\<you>\.android\adbkey`) to the controller and use **Import adbkey…**. The target then accepts DevBridge with no prompt. The file must be PKCS#8 (`-----BEGIN PRIVATE KEY-----`); if yours says `BEGIN RSA PRIVATE KEY`, convert it: `openssl pkcs8 -topk8 -nocrypt -in adbkey -out adbkey.pk8`.
 - **Use an OTG mouse** on the target to tap *Allow* on the prompt, if the part of the screen that shows it still works.
 
+**Keep your key across reinstalls.** DevBridge keeps its key inside the app, so uninstalling loses it and every phone asks to approve DevBridge again, on a screen you may not be able to tap. Use **Export key…** before an uninstall and **Import adbkey…** afterwards. The file is the key those phones trust, so keep it private. Updating through the in-app button keeps the key.
+
 DevBridge cannot turn USB debugging on for a phone where it is off, and cannot bypass a lock screen — it can only type a PIN you supply.
 
 ## Responsible use
