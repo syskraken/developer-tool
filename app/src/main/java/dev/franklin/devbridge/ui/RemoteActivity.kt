@@ -22,7 +22,6 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import dev.franklin.devbridge.Session
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -64,17 +63,11 @@ class RemoteActivity : AppCompatActivity() {
     private var deviceH = 0
     private var surfaceReady = false
     private var liveStream: LiveStream? = null
-    private var motionSupported = false
 
     // touch state
-    private enum class Touch { NONE, PENDING, DRAGGING }
-    private var touch = Touch.NONE
     private var downX = 0f
     private var downY = 0f
     private var downTime = 0L
-    private val pendingMove = AtomicReference<Pair<Int, Int>?>(null)
-    private var lastDevicePoint: Pair<Int, Int>? = null
-    private val startDrag = Runnable { if (touch == Touch.PENDING) beginDrag() }
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -208,7 +201,6 @@ class RemoteActivity : AppCompatActivity() {
     private fun begin() {
         capture.execute {
             val connection = Session.connection ?: return@execute
-            motionSupported = (connection.shell("getprop ro.build.version.sdk").trim().toIntOrNull() ?: 0) >= 31
             val bitmap = grabSnapshot() ?: run {
                 ui.post { status.text = "Could not read the screen. Is the phone unlocked or screen capture blocked?" }
                 return@execute
@@ -348,65 +340,27 @@ class RemoteActivity : AppCompatActivity() {
         return dx to dy
     }
 
+    /**
+     * One `input` command per gesture, sent when the finger lifts. Android plays a swipe back as a
+     * single smooth, correctly timed drag, so scrolling and flicks behave like a real finger. Sending
+     * the drag live instead means one `input` process per move event: each takes a few hundred
+     * milliseconds to start, so the phone sees a slow, jerky, gappy touch that scrolls poorly.
+     */
     private fun handleTouch(event: MotionEvent) {
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                downX = event.x; downY = event.y; downTime = event.eventTime
-                touch = Touch.PENDING
-                lastDevicePoint = toDevice(event.x, event.y)
-                if (motionSupported) ui.postDelayed(startDrag, 250)
-            }
-            MotionEvent.ACTION_MOVE -> {
-                lastDevicePoint = toDevice(event.x, event.y)
-                if (touch == Touch.PENDING && motionSupported && hypot(event.x - downX, event.y - downY) > dp(8)) beginDrag()
-                if (touch == Touch.DRAGGING) lastDevicePoint?.let { sendMove(it) }
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                ui.removeCallbacks(startDrag)
-                val end = toDevice(event.x, event.y) ?: lastDevicePoint
-                when (touch) {
-                    Touch.DRAGGING -> end?.let { sendMotion("UP", it) }
-                    Touch.PENDING -> finishWithoutMotion(event, end)
-                    Touch.NONE -> {}
+            MotionEvent.ACTION_DOWN -> { downX = event.x; downY = event.y; downTime = event.eventTime }
+            MotionEvent.ACTION_UP -> {
+                val start = toDevice(downX, downY) ?: return
+                val end = toDevice(event.x, event.y) ?: return
+                val held = event.eventTime - downTime
+                val moved = hypot(event.x - downX, event.y - downY)
+                val flag = displayFlag()
+                when {
+                    moved > dp(12) -> exec("input ${flag}swipe ${start.first} ${start.second} ${end.first} ${end.second} ${max(100L, min(held, 1500L))}")
+                    held > 500 -> exec("input ${flag}swipe ${start.first} ${start.second} ${start.first} ${start.second} $held")
+                    else -> exec("input ${flag}tap ${start.first} ${start.second}")
                 }
-                touch = Touch.NONE
             }
-        }
-    }
-
-    /** Phones without `input motionevent` (before Android 12) get a tap or a swipe when the finger lifts. */
-    private fun finishWithoutMotion(event: MotionEvent, end: Pair<Int, Int>?) {
-        val start = toDevice(downX, downY) ?: return
-        val stop = end ?: start
-        val held = event.eventTime - downTime
-        val moved = hypot(event.x - downX, event.y - downY)
-        val flag = displayFlag()
-        when {
-            moved > dp(12) -> exec("input ${flag}swipe ${start.first} ${start.second} ${stop.first} ${stop.second} ${max(100L, min(held, 1500L))}")
-            held > 500 -> exec("input ${flag}swipe ${start.first} ${start.second} ${start.first} ${start.second} $held")
-            else -> exec("input ${flag}tap ${start.first} ${start.second}")
-        }
-    }
-
-    private fun beginDrag() {
-        val start = toDevice(downX, downY) ?: return
-        touch = Touch.DRAGGING
-        sendMotion("DOWN", start)
-    }
-
-    private fun sendMotion(action: String, point: Pair<Int, Int>) {
-        pendingMove.set(null)
-        exec("input ${displayFlag()}motionevent $action ${point.first} ${point.second}")
-    }
-
-    /** Only the newest position is sent; older ones are skipped while the phone is still busy. */
-    private fun sendMove(point: Pair<Int, Int>) {
-        val idle = pendingMove.getAndSet(point) == null
-        if (!idle) return
-        input.execute {
-            val next = pendingMove.getAndSet(null) ?: return@execute
-            val connection = Session.connection ?: return@execute
-            try { connection.shell("input ${displayFlag()}motionevent MOVE ${next.first} ${next.second}", 5_000) } catch (e: Exception) { /* next move retries */ }
         }
     }
 
