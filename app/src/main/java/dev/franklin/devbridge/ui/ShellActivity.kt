@@ -45,22 +45,22 @@ class ShellActivity : AppCompatActivity() {
         }
         root.addView(input)
 
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val row = wrapRow()
         row.addView(button("Run") { submit() })
         row.addView(button("↑") { recall(-1) })
         row.addView(button("↓") { recall(1) })
         row.addView(button("Clear") { output.text = "" })
         root.addView(row)
 
-        val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val chipScroll = android.widget.HorizontalScrollView(this).apply { addView(chips) }
+        val chips = wrapRow()
         for ((name, cmd) in quick) chips.addView(button(name) { run(cmd) })
-        root.addView(chipScroll)
+        root.addView(chips)
 
         output = label("", 12f, mono = true)
         scroll = ScrollView(this).apply { addView(output) }
         root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        setContentView(root)
+        root.applySystemBarPadding()
+        setContentView(centered(root, 900))
 
         if (!Session.isConnected()) append("Not connected.\n")
     }

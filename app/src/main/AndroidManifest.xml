@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Lets the app hand a downloaded update to the system installer. Android
+         still shows its own confirmation prompt for every install. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <application
@@ -19,8 +22,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".ui.RemoteActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <!-- Handles its own size changes so rotating, folding or resizing the window never restarts the live stream. -->
+        <activity
+            android:name=".ui.RemoteActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density|uiMode" />
         <activity android:name=".ui.ReportActivity" android:exported="false" />
         <activity android:name=".ui.ShellActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+
+        <receiver
+            android:name=".update.InstallReceiver"
+            android:exported="false" />
     </application>
 </manifest>

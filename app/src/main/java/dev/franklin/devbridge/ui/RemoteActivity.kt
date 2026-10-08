@@ -15,7 +15,6 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -42,6 +41,8 @@ class RemoteActivity : AppCompatActivity() {
     private val input = Executors.newSingleThreadExecutor()
     private val capture = Executors.newSingleThreadExecutor()
 
+    private lateinit var root: LinearLayout
+    private lateinit var panel: MaxHeightScrollView
     private lateinit var stage: FrameLayout
     private lateinit var screen: FrameLayout
     private lateinit var video: SurfaceView
@@ -78,10 +79,12 @@ class RemoteActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         title = "Remote control"
 
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
-        status = label("Connecting to screen…", 12f).apply { setPadding(dp(8), dp(4), dp(8), dp(4)) }
-        root.addView(status)
+        status = label("Connecting to screen…", 12f).apply {
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            setTextColor(0xFFFFFFFF.toInt())
+            setBackgroundColor(0x99000000.toInt())
+            setTextIsSelectable(false)
+        }
 
         stage = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
         screen = FrameLayout(this)
@@ -92,8 +95,9 @@ class RemoteActivity : AppCompatActivity() {
         screen.addView(snapshot, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         screen.addView(touchLayer, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         stage.addView(screen, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        // Over the picture rather than beside it, so the picture view never has to move when the layout changes.
+        stage.addView(status, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
         stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit() }
-        root.addView(stage, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         video.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) { surfaceReady = true; maybeStartLive() }
@@ -101,7 +105,8 @@ class RemoteActivity : AppCompatActivity() {
             override fun surfaceDestroyed(holder: SurfaceHolder) { surfaceReady = false; stopLive() }
         })
 
-        val keys = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        // Controls wrap onto as many rows as the width allows instead of scrolling sideways.
+        val keys = wrapRow()
         keys.addView(button("◀") { key(4) })           // BACK
         keys.addView(button("●") { key(3) })           // HOME
         keys.addView(button("▢") { key(187) })         // APP_SWITCH
@@ -115,18 +120,29 @@ class RemoteActivity : AppCompatActivity() {
         keys.addView(liveButton)
         keys.addView(button("↻") { restart() })
         keys.addView(button("Pause") { paused = !paused })
-        root.addView(HorizontalScrollView(this).apply { addView(keys) })
 
-        val displays = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), 0, dp(8), 0) }
         logicalField = EditText(this).apply { hint = "input display"; setText("0"); setSingleLine(); minEms = 4 }
         physicalField = EditText(this).apply { hint = "screen id (opt.)"; setSingleLine(); minEms = 6 }
+        val displays = wrapRow()
         displays.addView(logicalField)
         displays.addView(physicalField)
         displays.addView(button("Detect") { detectDisplays() })
         displays.addView(button("Launch app") { launchDialog() })
-        root.addView(HorizontalScrollView(this).apply { addView(displays) })
 
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            addView(keys)
+            addView(displays)
+        }
+        panel = MaxHeightScrollView(this) { (resources.configuration.screenHeightDp * resources.displayMetrics.density * 0.42f).toInt() }.apply { addView(controls) }
+
+        root = LinearLayout(this)
+        root.addView(stage)
+        root.addView(panel)
+        root.applySystemBarPadding()
         setContentView(root)
+        arrange()
 
         if (!Session.isConnected()) {
             status.text = "Not connected."
@@ -134,6 +150,32 @@ class RemoteActivity : AppCompatActivity() {
             return
         }
         begin()
+    }
+
+    /**
+     * Portrait: picture filling the screen with the controls underneath.
+     * Landscape or wide: picture on the left, controls in a side panel.
+     * Runs again on every size change, so rotating, folding or resizing the
+     * window re-flows the screen. Nothing is re-parented, so the video surface
+     * and the live stream carry on untouched.
+     */
+    private fun arrange() {
+        val sideBySide = isLandscapeWindow()
+        if (sideBySide) {
+            root.orientation = LinearLayout.HORIZONTAL
+            stage.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+            val width = (resources.configuration.screenWidthDp * 0.34f).toInt().coerceIn(240, 360)
+            panel.layoutParams = LinearLayout.LayoutParams(dp(width), ViewGroup.LayoutParams.MATCH_PARENT)
+        } else {
+            root.orientation = LinearLayout.VERTICAL
+            stage.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            panel.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        arrange()
     }
 
     // --- startup / modes ---------------------------------------------------------------------------------

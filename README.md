@@ -15,6 +15,14 @@ You install DevBridge on a **working** phone (the controller) and connect it to 
 | **Hidden app audit** | Finds user-installed apps with no launcher icon, disabled apps, apps removed with data kept, enabled accessibility services, notification listeners, device admins, and system-lookalike package names. |
 | **ADB shell** | Run any `adb shell` command, with history and quick actions. |
 
+## Updating
+
+The **Check for updates** button on the home screen asks GitHub for the latest release. If a newer one exists it becomes **Update to x.y.z**: DevBridge downloads the APK, checks it against the published `.sha256`, and hands it to Android's installer, which still asks you to confirm. The first time, Android asks you to allow installs from DevBridge. Updates only install over a copy signed with the same key, so a debug APK from CI can't be updated in place; uninstall it and install the release.
+
+## Screen sizes
+
+The layout adapts to the window: one centred column on phones, two panes (connection | tools and updates) on tablets and wide windows, and the remote screen puts its controls beside the picture in landscape or under it in portrait. It re-flows when you rotate, fold or resize the window without restarting the live video, and keeps clear of the status bar, navigation bar and display cutout.
+
 ## Connecting
 
 1. **USB (OTG).** Plug the target into the controller with an OTG adapter/cable. The target must have **USB debugging on**. Tap *Connect over USB*.

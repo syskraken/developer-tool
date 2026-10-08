@@ -46,7 +46,9 @@ class ReportActivity : AppCompatActivity() {
         content = column()
         progress = label("Running…", 14f)
         content.addView(progress)
-        setContentView(scrolling(content))
+        val scroller = scrolling(content)
+        scroller.applySystemBarPadding()
+        setContentView(centered(scroller, 760))
 
         if (!Session.isConnected()) {
             progress.text = "Not connected."

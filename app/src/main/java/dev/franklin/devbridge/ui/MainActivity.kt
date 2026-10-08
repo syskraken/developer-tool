@@ -7,10 +7,12 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -24,8 +26,14 @@ import dev.franklin.devbridge.adb.AdbConnection
 import dev.franklin.devbridge.adb.AdbException
 import dev.franklin.devbridge.adb.TcpTransport
 import dev.franklin.devbridge.adb.UsbTransport
+import dev.franklin.devbridge.update.UpdateChecker
+import dev.franklin.devbridge.update.Updater
 import java.util.concurrent.Executors
 
+/**
+ * Connect screen. One column on phones; connection on the left and tools plus
+ * updates on the right once the window is wide enough to afford two panes.
+ */
 class MainActivity : AppCompatActivity() {
 
     private val ui = Handler(Looper.getMainLooper())
@@ -34,6 +42,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var host: EditText
     private lateinit var tools: LinearLayout
+    private lateinit var versionInfo: TextView
+    private lateinit var updateButton: Button
+
+    /** Set once a check finds something newer, so the button can install it directly. */
+    private var availableUpdate: UpdateChecker.Release? = null
+    private var renderedUpdateRevision = -1L
+
+    private val updateProgress = object : Runnable {
+        override fun run() {
+            renderUpdateProgress()
+            ui.postDelayed(this, 500)
+        }
+    }
 
     private val importKey = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@registerForActivityResult
@@ -65,11 +86,12 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         title = "DevBridge"
 
-        val root = column()
-        root.addView(label("DevBridge", 26f, bold = true))
-        status = label("Not connected", 15f)
-        root.spaced(status, 4)
-        root.spaced(
+        // --- connection pane -----------------------------------------------------------------------
+        val connect = column()
+        connect.addView(label("DevBridge", 26f, bold = true))
+        status = label(if (Session.isConnected()) "Connected to ${Session.label}" else "Not connected", 15f)
+        connect.spaced(status, 4)
+        connect.spaced(
             label(
                 "Controls another Android phone over ADB. On that phone, USB debugging must already be on. " +
                     "If its screen is broken and it has never trusted this app, import an adbkey from a computer it trusts.",
@@ -78,33 +100,63 @@ class MainActivity : AppCompatActivity() {
             8,
         )
 
-        root.spaced(label("Wi-Fi / network", 16f, bold = true), 20)
+        connect.spaced(label("Wi-Fi / network", 16f, bold = true), 20)
         host = EditText(this).apply {
             hint = "192.168.1.20:5555"
             setSingleLine()
             setText(getPreferences(MODE_PRIVATE).getString("host", ""))
         }
-        root.addView(host)
-        root.addView(button("Connect over network") { connectTcp() })
+        connect.addView(host)
+        connect.addView(button("Connect over network") { connectTcp() })
 
-        root.spaced(label("USB cable (OTG)", 16f, bold = true), 20)
-        root.addView(button("Connect over USB") { chooseUsb() })
+        connect.spaced(label("USB cable (OTG)", 16f, bold = true), 20)
+        connect.addView(button("Connect over USB") { chooseUsb() })
 
-        root.spaced(label("Trusted key", 16f, bold = true), 20)
-        root.addView(button("Import adbkey…") { importKey.launch(arrayOf("*/*")) })
+        connect.spaced(label("Trusted key", 16f, bold = true), 20)
+        connect.addView(button("Import adbkey…") { importKey.launch(arrayOf("*/*")) })
 
+        // --- tools + updates pane ----------------------------------------------------------------------
         tools = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(tools)
+        val side = column()
+        side.addView(tools)
+        side.spaced(label("Updates", 16f, bold = true), 24)
+        versionInfo = label("Version ${currentVersion()}", 13f)
+        side.spaced(versionInfo, 4)
+        updateButton = button("Check for updates") { onUpdateButton() }
+        side.addView(updateButton)
 
-        setContentView(scrolling(root))
+        val content = if (windowWidth() == WindowWidth.EXPANDED) {
+            // Two panes, each scrolling on its own so a short window never hides the buttons.
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(scrolling(connect), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
+                addView(scrolling(side), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
+            }
+        } else {
+            // One column; the tools sit right under the connection controls.
+            connect.addView(side, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            scrolling(connect)
+        }
+        val maxWidth = if (windowWidth() == WindowWidth.EXPANDED) 1200 else 640
+        content.applySystemBarPadding()
+        setContentView(centered(content, maxWidth))
 
         val filter = IntentFilter(ACTION_USB_PERMISSION)
         ContextCompat.registerReceiver(this, usbPermission, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+
+        // Quiet check on launch: it only speaks up when something newer exists.
+        runUpdateCheck(announce = false)
     }
 
     override fun onResume() {
         super.onResume()
         renderTools()
+        ui.post(updateProgress)
+    }
+
+    override fun onPause() {
+        ui.removeCallbacks(updateProgress)
+        super.onPause()
     }
 
     override fun onDestroy() {
@@ -119,8 +171,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderTools() {
         tools.removeAllViews()
-        if (!Session.isConnected()) return
-        tools.spaced(label("Connected: ${Session.label}", 16f, bold = true), 24)
+        if (!Session.isConnected()) {
+            tools.addView(label("Tools appear here once a phone is connected.", 13f))
+            return
+        }
+        tools.addView(label("Connected: ${Session.label}", 16f, bold = true))
         tools.addView(button("Remote control") { open(RemoteActivity::class.java) })
         tools.addView(button("Hardware check") { report(ReportActivity.MODE_HARDWARE) })
         tools.addView(button("Permission analysis") { report(ReportActivity.MODE_PERMISSIONS) })
@@ -138,7 +193,107 @@ class MainActivity : AppCompatActivity() {
     private fun report(mode: String) =
         startActivity(Intent(this, ReportActivity::class.java).putExtra(ReportActivity.EXTRA_MODE, mode))
 
-    // --- connecting --------------------------------------------------------------------------------
+    // --- updates -------------------------------------------------------------------------------------------
+
+    private fun currentVersion(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"
+    } catch (e: Exception) {
+        "unknown"
+    }
+
+    private fun onUpdateButton() {
+        val release = availableUpdate
+        if (release == null) {
+            runUpdateCheck(announce = true)
+            return
+        }
+        if (release.apkUrl == null) {
+            // Nothing to install in-app; send the person to the release page.
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.pageUrl)))
+            return
+        }
+        if (!Updater.canInstall(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("Allow installing updates")
+                .setMessage(
+                    "Android needs your permission before DevBridge can install an update. " +
+                        "On the next screen, turn on “Allow from this source”, then come back and tap Update again.",
+                )
+                .setPositiveButton("Open settings") { _, _ -> startActivity(Updater.unknownSourcesSettings(this)) }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+            return
+        }
+        Updater.reset()
+        worker.execute { Updater.downloadAndInstall(applicationContext, release) }
+    }
+
+    private fun runUpdateCheck(announce: Boolean) {
+        if (announce) {
+            updateButton.isEnabled = false
+            updateButton.text = "Checking…"
+        }
+        worker.execute {
+            val result = UpdateChecker.check(currentVersion())
+            ui.post { applyUpdateResult(result, announce) }
+        }
+    }
+
+    private fun applyUpdateResult(result: UpdateChecker.Result, announce: Boolean) {
+        updateButton.isEnabled = true
+        when (result) {
+            is UpdateChecker.Result.Available -> {
+                availableUpdate = result.release
+                versionInfo.text = "Version ${currentVersion()} — ${result.release.version} is available"
+                updateButton.text = if (result.release.apkUrl != null) "Update to ${result.release.version}" else "Download ${result.release.version}"
+            }
+            UpdateChecker.Result.UpToDate -> {
+                availableUpdate = null
+                updateButton.text = "Check for updates"
+                if (announce) toast("DevBridge is up to date")
+            }
+            UpdateChecker.Result.NoReleases -> {
+                updateButton.text = "Check for updates"
+                if (announce) toast("No releases published yet")
+            }
+            is UpdateChecker.Result.Failed -> {
+                updateButton.text = "Check for updates"
+                if (announce) toast("Update check failed: ${result.reason}")
+            }
+        }
+    }
+
+    private fun renderUpdateProgress() {
+        val revision = Updater.revision()
+        if (revision == renderedUpdateRevision) return
+        renderedUpdateRevision = revision
+        val release = availableUpdate
+        when (val s = Updater.status) {
+            Updater.Status.Idle -> {}
+            is Updater.Status.Downloading -> {
+                updateButton.isEnabled = false
+                updateButton.text = "Downloading… ${s.percent}%"
+            }
+            Updater.Status.Verifying -> updateButton.text = "Verifying…"
+            Updater.Status.Installing -> updateButton.text = "Installing…"
+            Updater.Status.Success -> {
+                updateButton.isEnabled = true
+                updateButton.text = "Updated"
+            }
+            is Updater.Status.Failed -> {
+                updateButton.isEnabled = true
+                updateButton.text = if (release != null) "Retry update to ${release.version}" else "Check for updates"
+                AlertDialog.Builder(this)
+                    .setTitle("Update failed")
+                    .setMessage(s.reason)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show()
+                Updater.reset()
+            }
+        }
+    }
+
+    // --- connecting ----------------------------------------------------------------------------------------
 
     private fun connectTcp() {
         val text = host.text.toString().trim()
@@ -151,7 +306,7 @@ class MainActivity : AppCompatActivity() {
         setStatus("Connecting to $name:$port…")
         worker.execute {
             try {
-                finish(AdbConnection(TcpTransport(name, port), Session.loadKey(this)), "$name:$port")
+                finishConnect(AdbConnection(TcpTransport(name, port), Session.loadKey(this)), "$name:$port")
             } catch (e: Exception) {
                 setStatus("Failed: ${e.message}")
             }
@@ -190,14 +345,14 @@ class MainActivity : AppCompatActivity() {
             try {
                 val manager = getSystemService(Context.USB_SERVICE) as UsbManager
                 val transport = UsbTransport.open(manager, device)
-                finish(AdbConnection(transport, Session.loadKey(this)), device.productName ?: "USB")
+                finishConnect(AdbConnection(transport, Session.loadKey(this)), device.productName ?: "USB")
             } catch (e: Exception) {
                 setStatus("Failed: ${e.message}")
             }
         }
     }
 
-    private fun finish(connection: AdbConnection, label: String) {
+    private fun finishConnect(connection: AdbConnection, name: String) {
         try {
             connection.connect(authTimeoutMs = 90_000) {
                 setStatus("Approve this computer on the phone (tick \"Always allow\" and tap Allow)…")
@@ -206,9 +361,9 @@ class MainActivity : AppCompatActivity() {
             setStatus("Failed: ${e.message}")
             return
         }
-        Session.set(connection, label)
+        Session.set(connection, name)
         ui.post {
-            setStatus("Connected to $label")
+            setStatus("Connected to $name")
             renderTools()
         }
     }
