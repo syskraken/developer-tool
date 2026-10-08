@@ -6,7 +6,7 @@ object HardwareCheck {
     class Result(val sections: List<Section>, val findings: List<Finding>)
 
     fun run(shell: Shell): Result {
-        val props = parseGetprop(shell.tryRun("getprop"))
+        val props = safely(emptyMap()) { parseGetprop(shell.tryRun("getprop")) }
         val sections = mutableListOf<Section>()
         val findings = mutableListOf<Finding>()
 
@@ -30,7 +30,7 @@ object HardwareCheck {
             )
         }
 
-        parseBattery(shell.tryRun("dumpsys battery"))?.let { battery ->
+        safely<Battery?>(null) { parseBattery(shell.tryRun("dumpsys battery")) }?.let { battery ->
             sections += Section("Battery", battery.lines)
             battery.tempC?.let {
                 if (it >= 45) findings += Finding(Severity.HIGH, "Battery is hot", "%.1f °C".format(it))
@@ -44,7 +44,7 @@ object HardwareCheck {
             }
         } ?: findings.add(Finding(Severity.INFO, "Battery information unavailable"))
 
-        val mem = parseMeminfo(shell.tryRun("cat /proc/meminfo"))
+        val mem = safely<Mem?>(null) { parseMeminfo(shell.tryRun("cat /proc/meminfo")) }
         if (mem != null) {
             val usedPct = 100 - (mem.availableKb * 100 / mem.totalKb).toInt()
             sections += Section(
@@ -53,7 +53,7 @@ object HardwareCheck {
             )
         }
 
-        val storage = parseDf(shell.tryRun("df /data"))
+        val storage = safely<Storage?>(null) { parseDf(shell.tryRun("df /data")) }
         if (storage != null) {
             sections += Section(
                 "Storage (/data)",
@@ -73,10 +73,10 @@ object HardwareCheck {
         ).filter { it.isNotBlank() }
         if (display.isNotEmpty()) sections += Section("Display", display)
 
-        val cpu = parseCpu(shell.tryRun("cat /proc/cpuinfo"))
+        val cpu = safely(Cpu(0, null)) { parseCpu(shell.tryRun("cat /proc/cpuinfo")) }
         sections += Section("CPU", listOf("Cores: ${cpu.cores}") + listOfNotNull(cpu.hardware?.let { "Hardware: $it" }))
 
-        val features = parseFeatures(shell.tryRun("pm list features"))
+        val features = safely(emptySet()) { parseFeatures(shell.tryRun("pm list features")) }
         val wanted = listOf(
             "Camera (rear)" to "android.hardware.camera",
             "Camera (front)" to "android.hardware.camera.front",
@@ -93,7 +93,7 @@ object HardwareCheck {
             sections += Section("Hardware features", wanted.map { (label, f) -> "$label: ${if (f in features) "present" else "not reported"}" })
         }
 
-        val sensors = parseSensors(shell.tryRun("dumpsys sensorservice"))
+        val sensors = safely(emptyList()) { parseSensors(shell.tryRun("dumpsys sensorservice")) }
         sections += Section(
             "Sensors",
             if (sensors.isEmpty()) listOf("Not reported") else listOf("${sensors.size} sensors") + sensors.map { "• $it" },
@@ -114,7 +114,7 @@ object HardwareCheck {
 
     fun parseGetprop(text: String): Map<String, String> {
         val map = HashMap<String, String>()
-        val regex = Regex("""^\[([^\]]+)]: \[(.*)]$""")
+        val regex = Regex("""^\[([^\]]+)\]: \[(.*)\]$""")
         for (line in text.lineSequence()) regex.find(line.trim())?.let { map[it.groupValues[1]] = it.groupValues[2] }
         return map
     }

@@ -17,3 +17,10 @@ fun Shell.tryRun(command: String): String = try {
 } catch (e: Exception) {
     ""
 }
+
+/** Runs [block]; if it throws (unexpected output, an unsupported pattern) returns [default] so one probe cannot sink a whole report. */
+inline fun <T> safely(default: T, block: () -> T): T = try {
+    block()
+} catch (e: Exception) {
+    default
+}

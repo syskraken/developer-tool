@@ -88,10 +88,10 @@ object PermissionAnalyzer {
 
     /** Collects the dumps, reporting progress, and analyses them. */
     fun run(shell: Shell, onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): Analysis {
-        val packages = parsePackageList(shell.tryRun("pm list packages -3"))
+        val packages = safely(emptyList()) { parsePackageList(shell.tryRun("pm list packages -3")) }
         val apps = packages.mapIndexed { i, pkg ->
             onProgress(i, packages.size)
-            parsePackageDump(pkg, shell.tryRun("dumpsys package $pkg"))
+            safely(AppPermissions(pkg, emptySet(), emptySet())) { parsePackageDump(pkg, shell.tryRun("dumpsys package $pkg")) }
         }
         onProgress(packages.size, packages.size)
         return analyze(apps)

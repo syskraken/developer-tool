@@ -20,7 +20,7 @@ object HiddenAppAudit {
     }
 
     fun parseDeviceAdmins(text: String): List<String> =
-        Regex("""admin=ComponentInfo\{([^}]+)}""").findAll(text).map { it.groupValues[1] }.distinct().toList()
+        Regex("""admin=ComponentInfo\{([^}]+)\}""").findAll(text).map { it.groupValues[1] }.distinct().toList()
 
     private val SYSTEM_LOOKALIKE = listOf("com.android.", "com.google.android.", "com.samsung.android.", "android.")
 
@@ -36,10 +36,10 @@ object HiddenAppAudit {
             .toSet() - PermissionAnalyzer.parsePackageList(shell.tryRun("pm list packages")).toSet()
 
         var launcherText = shell.tryRun("cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER")
-        if (parseLauncherPackages(launcherText).isEmpty()) {
+        if (safely(emptySet<String>()) { parseLauncherPackages(launcherText) }.isEmpty()) {
             launcherText = shell.tryRun("pm query-activities --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER")
         }
-        val launcher = parseLauncherPackages(launcherText)
+        val launcher = safely(emptySet()) { parseLauncherPackages(launcherText) }
 
         sections += Section("Overview", listOf(
             "Third-party apps: ${userApps.size}",
@@ -64,15 +64,15 @@ object HiddenAppAudit {
 
         sections += Section("Removed but data kept (${removedKeepingData.size})", removedKeepingData.sorted().ifEmpty { listOf("None") })
 
-        val accessibility = parseComponentList(shell.tryRun("settings get secure enabled_accessibility_services"))
+        val accessibility = safely(emptyList()) { parseComponentList(shell.tryRun("settings get secure enabled_accessibility_services")) }
         sections += Section("Accessibility services enabled", accessibility.ifEmpty { listOf("None") })
         for (c in accessibility) findings += Finding(Severity.HIGH, c.substringBefore('/'), "Has an active accessibility service: it can read the screen and perform taps. Legitimate for screen readers and password managers; suspicious otherwise.")
 
-        val listeners = parseComponentList(shell.tryRun("settings get secure enabled_notification_listeners"))
+        val listeners = safely(emptyList()) { parseComponentList(shell.tryRun("settings get secure enabled_notification_listeners")) }
         sections += Section("Notification access", listeners.ifEmpty { listOf("None") })
         for (c in listeners) findings += Finding(Severity.WARN, c.substringBefore('/'), "Can read every notification, including one-time codes.")
 
-        val admins = parseDeviceAdmins(shell.tryRun("dumpsys device_policy"))
+        val admins = safely(emptyList()) { parseDeviceAdmins(shell.tryRun("dumpsys device_policy")) }
         sections += Section("Device administrators", admins.ifEmpty { listOf("None") })
         for (c in admins) findings += Finding(Severity.HIGH, c.substringBefore('/'), "Is a device administrator: it can resist uninstalling and enforce policies.")
 
