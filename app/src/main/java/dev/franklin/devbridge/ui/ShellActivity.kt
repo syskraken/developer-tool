@@ -37,6 +37,8 @@ class ShellActivity : AppCompatActivity() {
 
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(12), dp(12), dp(12)) }
 
+        root.addView(label("ADB shell", 22f, bold = true))
+
         input = EditText(this).apply {
             hint = "command, e.g. getprop ro.product.model"
             setSingleLine()
@@ -59,7 +61,7 @@ class ShellActivity : AppCompatActivity() {
         output = label("", 12f, mono = true)
         scroll = ScrollView(this).apply { addView(output) }
         root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.applySystemBarPadding()
+        root.applySystemBarPadding(includeTop = true)
         setContentView(centered(root, 900))
 
         if (!Session.isConnected()) append("Not connected.\n")

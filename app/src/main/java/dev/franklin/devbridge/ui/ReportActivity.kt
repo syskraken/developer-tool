@@ -44,10 +44,11 @@ class ReportActivity : AppCompatActivity() {
         }
 
         content = column()
+        content.addView(label(title.toString(), 22f, bold = true))
         progress = label("Running…", 14f)
-        content.addView(progress)
+        content.spaced(progress, 8)
         val scroller = scrolling(content)
-        scroller.applySystemBarPadding()
+        scroller.applySystemBarPadding(includeTop = true)
         setContentView(centered(scroller, 760))
 
         if (!Session.isConnected()) {
@@ -77,6 +78,7 @@ class ReportActivity : AppCompatActivity() {
 
     private fun show(findings: List<Finding>, sections: List<Section>) {
         content.removeAllViews()
+        content.addView(label(title.toString(), 22f, bold = true))
         text = reportText(findings, sections)
 
         content.addView(button("Copy report") {

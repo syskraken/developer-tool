@@ -133,12 +133,14 @@ class MainActivity : AppCompatActivity() {
                 addView(scrolling(side), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
             }
         } else {
-            // One column; the tools sit right under the connection controls.
+            // One column; the tools sit right under the connection controls, so drop the second
+            // set of padding that would otherwise indent them further than everything above.
+            side.setPadding(0, 0, 0, 0)
             connect.addView(side, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             scrolling(connect)
         }
         val maxWidth = if (windowWidth() == WindowWidth.EXPANDED) 1200 else 640
-        content.applySystemBarPadding()
+        content.applySystemBarPadding(includeTop = true)
         setContentView(centered(content, maxWidth))
 
         val filter = IntentFilter(ACTION_USB_PERMISSION)

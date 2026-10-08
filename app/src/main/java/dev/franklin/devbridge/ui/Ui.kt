@@ -23,6 +23,9 @@ fun Context.column(padding: Int = 16): LinearLayout = LinearLayout(this).apply {
 
 fun Context.scrolling(content: LinearLayout): ScrollView = ScrollView(this).apply {
     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    // Hold focus here so the first text field does not grab it and scroll the page away from the top.
+    isFocusableInTouchMode = true
+    descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
     addView(content)
 }
 

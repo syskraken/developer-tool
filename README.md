@@ -8,7 +8,7 @@ You install DevBridge on a **working** phone (the controller) and connect it to 
 
 | Feature | How it works |
 |---|---|
-| **Remote control** | **Continuous live video** like scrcpy: the phone's `screenrecord` H.264 stream is decoded in hardware and drawn in real time, with no 3-minute cut-off (a second recording takes over before the first ends), with touches sent as you drag (Android 12+ gets true live dragging via `input motionevent`; older phones get taps and swipes when you lift). Falls back to screenshots if live video isn't available (**Live: off**). Works with a dead panel. Includes wake, lock-screen PIN entry, Back / Home / Recents / Power / volume, and text entry. |
+| **Remote control** | Shows the phone's screen as a steady stream of images (`screencap`) and sends taps, swipes, long-presses, keys and text (`input`). Works with a dead panel. Includes wake, lock-screen PIN entry, Back / Home / Recents / Power / volume. The controls fold away with the **Hide controls** button to give the picture the whole window. **Live video (beta)** is an optional switch that streams H.264 from the phone's screen recorder instead; it depends on the phone supporting that, so it is off by default and falls back to images if it can't start. |
 | **Flip cover screen** | Set the *input display* (usually `1`) and, optionally, the *screencap id*; **Detect** lists them. **Launch app** starts a package on that display (`am start --display`). Best-effort: it depends on the manufacturer allowing apps on the cover display. |
 | **Hardware check** | Model, Android/patch level, bootloader state, battery level/health/temperature, memory, storage, display, CPU, sensors, cameras/NFC/fingerprint/OTG, radios. Flags overheating, low storage, unlocked bootloader. |
 | **Permission analysis** | Reads the permissions each third-party app actually holds (`dumpsys package`) and scores them, calling out SMS, call log, microphone, background location, accessibility, device admin, install-apps and more. |
@@ -43,7 +43,7 @@ DevBridge only controls a phone that has explicitly authorised it (USB debugging
 
 ## Limits
 
-- Live video still uses the phone's `screenrecord`, so it can't show protected content (some banking apps, DRM video), and after a rotation you need to tap **↻**. Two recordings overlap briefly at each hand-over, which a few phones may not allow; if so the picture pauses for about a second instead.
+- Live video (beta) uses the phone's `screenrecord`, so it can't show protected content (some banking apps, DRM video), and after a rotation you need to tap **↻**. Two recordings overlap briefly at each hand-over, which a few phones may not allow; if so the picture pauses for about a second instead.
 - Touch goes through Android's `input` command, which starts a process per event, so expect some lag (typically 100–300 ms) and no multi-touch or pinch. Nothing is installed or run on the target phone beyond standard Android tools.
 - Analysis relies on `dumpsys`/`pm` output, which varies between Android versions and manufacturers; sections degrade to "not reported" rather than failing.
 

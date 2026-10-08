@@ -49,12 +49,14 @@ class RemoteActivity : AppCompatActivity() {
     private lateinit var snapshot: ImageView
     private lateinit var status: TextView
     private lateinit var liveButton: Button
+    private lateinit var controlsToggle: Button
     private lateinit var logicalField: EditText
     private lateinit var physicalField: EditText
 
     @Volatile private var running = true
     @Volatile private var paused = false
-    @Volatile private var live = true
+    // Snapshots are the default: they work on every phone. Live video is opt-in because it depends on the phone's screen recorder.
+    @Volatile private var live = false
     @Volatile private var snapshotLoop = false
     @Volatile private var physicalIdSnapshot = ""
 
@@ -95,6 +97,15 @@ class RemoteActivity : AppCompatActivity() {
         screen.addView(snapshot, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         screen.addView(touchLayer, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         stage.addView(screen, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        // Always-visible handle that folds the controls away to give the picture the whole window.
+        controlsToggle = Button(this).apply {
+            isAllCaps = false
+            textSize = 12f
+            setBackgroundColor(0xCC202020.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
+            setOnClickListener { setControlsVisible(panel.visibility != View.VISIBLE) }
+        }
+
         // Over the picture rather than beside it, so the picture view never has to move when the layout changes.
         stage.addView(status, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
         stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit() }
@@ -116,7 +127,7 @@ class RemoteActivity : AppCompatActivity() {
         keys.addView(button("Wake") { wake() })
         keys.addView(button("PIN") { pinDialog() })
         keys.addView(button("Text") { textDialog() })
-        liveButton = button("Live: on") { toggleLive() }
+        liveButton = button("Live video (beta): off") { toggleLive() }
         keys.addView(liveButton)
         keys.addView(button("↻") { restart() })
         keys.addView(button("Pause") { paused = !paused })
@@ -137,12 +148,19 @@ class RemoteActivity : AppCompatActivity() {
         }
         panel = MaxHeightScrollView(this) { (resources.configuration.screenHeightDp * resources.displayMetrics.density * 0.42f).toInt() }.apply { addView(controls) }
 
+        stage.addView(
+            controlsToggle,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END)
+                .apply { setMargins(dp(8), dp(8), dp(8), dp(8)) },
+        )
+
         root = LinearLayout(this)
         root.addView(stage)
         root.addView(panel)
-        root.applySystemBarPadding()
+        root.applySystemBarPadding(includeTop = true)
         setContentView(root)
         arrange()
+        setControlsVisible(!getPreferences(MODE_PRIVATE).getBoolean("controlsCollapsed", false))
 
         if (!Session.isConnected()) {
             status.text = "Not connected."
@@ -171,6 +189,13 @@ class RemoteActivity : AppCompatActivity() {
             stage.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
             panel.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
+    }
+
+    private fun setControlsVisible(visible: Boolean) {
+        panel.visibility = if (visible) View.VISIBLE else View.GONE
+        controlsToggle.text = if (visible) "Hide controls ▾" else "Controls ▴"
+        getPreferences(MODE_PRIVATE).edit().putBoolean("controlsCollapsed", !visible).apply()
+        stage.post { fit() }
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
@@ -205,7 +230,7 @@ class RemoteActivity : AppCompatActivity() {
 
     private fun toggleLive() {
         live = !live
-        liveButton.text = if (live) "Live: on" else "Live: off"
+        liveButton.text = if (live) "Live video (beta): on" else "Live video (beta): off"
         if (live) {
             snapshotLoop = false
             maybeStartLive()
@@ -256,7 +281,7 @@ class RemoteActivity : AppCompatActivity() {
                 ui.post {
                     liveStream = null
                     live = false
-                    liveButton.text = "Live: off"
+                    liveButton.text = "Live video (beta): off"
                     snapshot.visibility = View.VISIBLE
                     status.text = "Live video unavailable ($reason). Using snapshots."
                     startSnapshotLoop()
