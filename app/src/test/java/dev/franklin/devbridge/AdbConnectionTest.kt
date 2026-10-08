@@ -201,4 +201,65 @@ class AdbConnectionTest {
         assertTrue(closed.await(3, java.util.concurrent.TimeUnit.SECONDS))
         c.close()
     }
+
+    @Test
+    fun aSilentPhoneIsAskedAgainAndThenReportedAsNotAnswering() {
+        var requests = 0
+        device { s ->
+            val input = s.getInputStream()
+            while (true) { input.message(); requests++ }
+        }
+        val c = connection()
+        c.resendIntervalMs = 100
+        val steps = ArrayList<String>()
+        try {
+            c.connect(authTimeoutMs = 300, firstReplyTimeoutMs = 450, onStep = { steps += it })
+            fail("expected a timeout")
+        } catch (e: AdbException) {
+            assertTrue(e.message!!, e.message!!.contains("did not answer"))
+        }
+        assertTrue("expected the request to be re-sent, saw $requests", requests >= 3)
+        assertTrue(steps.any { it.contains("asking the phone again") })
+    }
+
+    @Test
+    fun aPhoneThatNeverApprovesIsReportedAsNotApproved() {
+        device { s ->
+            val input = s.getInputStream()
+            input.message()
+            s.send(AdbMessage(Adb.A_AUTH, Adb.AUTH_TOKEN, 0, token))
+            input.message()                                                // signature
+            s.send(AdbMessage(Adb.A_AUTH, Adb.AUTH_TOKEN, 0, token))      // rejected
+            input.message()                                                // public key, then silence
+            Thread.sleep(2000)
+        }
+        val c = connection()
+        var prompted = false
+        try {
+            c.connect(authTimeoutMs = 300, firstReplyTimeoutMs = 2000) { prompted = true }
+            fail("expected a timeout")
+        } catch (e: AdbException) {
+            assertTrue(e.message!!, e.message!!.contains("nothing was approved"))
+        }
+        assertTrue(prompted)
+    }
+
+    @Test
+    fun theHandshakeReportsEachStep() {
+        device { s ->
+            val input = s.getInputStream()
+            input.message()
+            s.send(AdbMessage(Adb.A_AUTH, Adb.AUTH_TOKEN, 0, token))
+            input.message()
+            s.send(AdbMessage(Adb.A_CNXN, Adb.VERSION, 4096, "device::".toByteArray()))
+            Thread.sleep(300)
+        }
+        val c = connection()
+        val steps = ArrayList<String>()
+        c.connect(5000, onStep = { steps += it })
+        assertEquals(listOf("Asked the phone to connect…"), steps.take(1))
+        assertEquals("Connected", steps.last())
+        assertTrue(steps.size >= 3)
+        c.close()
+    }
 }

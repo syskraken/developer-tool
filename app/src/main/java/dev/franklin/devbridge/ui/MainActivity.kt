@@ -436,8 +436,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun finishConnect(connection: AdbConnection, name: String) {
         try {
-            connection.connect(authTimeoutMs = 90_000) {
-                setStatus("Approve this computer on the phone (tick \"Always allow\" and tap Allow)…")
+            connection.connect(authTimeoutMs = 90_000, onStep = { setStatus(it) }) {
+                setStatus("Waiting for approval: on the phone, tick \"Always allow\" and tap Allow. If no prompt shows, make sure its screen is on and unlocked.")
             }
         } catch (e: AdbException) {
             setStatus("Failed: ${e.message}")

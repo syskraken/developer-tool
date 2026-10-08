@@ -42,30 +42,60 @@ class AdbConnection(
     /** Cleared if the device refuses `exec:` (very old Android), after which `shell:` is used. */
     @Volatile private var execSupported = true
 
+    /** How long to wait in silence before sending the connection request again. */
+    internal var resendIntervalMs = 3_000
+
     /**
-     * Handshake and authentication. [onAuthPrompt] fires when the device wants
-     * the user to approve this key on its screen; [authTimeoutMs] is how long
-     * to wait for that tap.
+     * Handshake and authentication. [onStep] narrates progress so a stall can be pinned to one stage;
+     * [onAuthPrompt] fires when the device wants the user to approve this key on its screen, and
+     * [authTimeoutMs] is how long to wait for that tap. A phone that stays silent is asked again every
+     * few seconds until [firstReplyTimeoutMs] has passed.
      */
-    fun connect(authTimeoutMs: Int = 60_000, onAuthPrompt: () -> Unit = {}) {
+    fun connect(
+        authTimeoutMs: Int = 60_000,
+        firstReplyTimeoutMs: Int = 10_000,
+        onStep: (String) -> Unit = {},
+        onAuthPrompt: () -> Unit = {},
+    ) {
+        // 0 = nothing heard yet, 1 = signing in, 2 = key sent and waiting for a person to approve.
+        var stage = 0
         try {
-            send(AdbMessage(Adb.A_CNXN, Adb.VERSION, Adb.MAX_PAYLOAD, "host::\u0000".toByteArray()))
-            var timeout = 10_000
+            val request = AdbMessage(Adb.A_CNXN, Adb.VERSION, Adb.MAX_PAYLOAD, "host::\u0000".toByteArray())
+            send(request)
+            onStep("Asked the phone to connect…")
+            val deadline = System.currentTimeMillis() + firstReplyTimeoutMs
             var signed = false
             while (true) {
-                val m = readMessage(timeout)
+                val wait = when (stage) {
+                    0 -> maxOf(1L, minOf(resendIntervalMs.toLong(), deadline - System.currentTimeMillis())).toInt()
+                    1 -> 10_000
+                    else -> authTimeoutMs
+                }
+                val m = try {
+                    readMessage(wait)
+                } catch (e: SocketTimeoutException) {
+                    if (stage == 0 && System.currentTimeMillis() < deadline) {
+                        send(request)
+                        onStep("No answer yet, asking the phone again…")
+                        continue
+                    }
+                    throw e
+                }
                 when (m.command) {
                     Adb.A_CNXN -> {
                         banner = String(m.data, Charsets.UTF_8).trimEnd('\u0000')
+                        onStep("Connected")
                         break
                     }
                     Adb.A_AUTH -> if (m.arg0 == Adb.AUTH_TOKEN) {
                         if (!signed) {
+                            stage = 1
                             send(AdbMessage(Adb.A_AUTH, Adb.AUTH_SIGNATURE, 0, key.signToken(m.data)))
                             signed = true
+                            onStep("The phone answered. Checking whether it already trusts this app…")
                         } else {
+                            stage = 2
                             send(AdbMessage(Adb.A_AUTH, Adb.AUTH_RSAPUBLICKEY, 0, key.publicKeyBytes(keyComment)))
-                            timeout = authTimeoutMs
                             onAuthPrompt()
                         }
                     }
@@ -74,7 +104,16 @@ class AdbConnection(
             }
         } catch (e: SocketTimeoutException) {
             close()
-            throw AdbException("Timed out waiting for the device (was the connection approved on the phone?)", e)
+            throw AdbException(
+                when (stage) {
+                    0 -> "The phone did not answer. Wake and unlock it (a sleeping or locked phone often will not talk), " +
+                        "then unplug and replug the cable and try again."
+                    1 -> "The phone stopped answering while signing in. Unplug and replug the cable and try again."
+                    else -> "The phone was asked to approve this connection, but nothing was approved. " +
+                        "Make sure its screen is on and unlocked, then try again."
+                },
+                e,
+            )
         } catch (e: IOException) {
             close()
             throw AdbException("Connection failed: ${e.message}", e)
