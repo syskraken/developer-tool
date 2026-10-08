@@ -21,6 +21,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import dev.franklin.devbridge.Session
+import dev.franklin.devbridge.analysis.DisplayParser
 import java.util.concurrent.Executors
 import kotlin.math.hypot
 import kotlin.math.max
@@ -130,7 +131,7 @@ class RemoteActivity : AppCompatActivity() {
         val displays = wrapRow()
         displays.addView(logicalField)
         displays.addView(physicalField)
-        displays.addView(button("Detect") { detectDisplays() })
+        displays.addView(button("Select display") { pickDisplay() })
         displays.addView(button("Launch app") { launchDialog() })
 
         val controls = LinearLayout(this).apply {
@@ -420,17 +421,39 @@ class RemoteActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun detectDisplays() {
-        exec("dumpsys SurfaceFlinger --display-id; echo ---; dumpsys display | grep -E 'Display [0-9]+:|mDisplayId=|mBaseDisplayInfo' | head -30") { out ->
-            AlertDialog.Builder(this)
-                .setTitle("Displays")
-                .setMessage(
-                    "Use a small number (0, 1…) in the first field for touches and apps. Use the long " +
-                        "Display ID from the first block in the second field to show that screen, then tap ↻.\n\n" + out.trim().ifEmpty { "No output." },
-                )
-                .setPositiveButton(android.R.string.ok, null)
-                .show()
+    /** Lists the phone's screens and switches to the one you choose, so there is no need to type ids. */
+    private fun pickDisplay() {
+        exec("dumpsys display") { displayDump ->
+            exec("dumpsys SurfaceFlinger --display-id") { flingerDump ->
+                val choices = try { DisplayParser.choices(displayDump, flingerDump) } catch (e: Exception) { emptyList() }
+                if (choices.isEmpty()) {
+                    AlertDialog.Builder(this)
+                        .setTitle("No displays found")
+                        .setMessage(
+                            "This phone did not report its screens in a form DevBridge understands. " +
+                                "You can still type the display numbers in the two boxes and tap ↻.\n\n" +
+                                (flingerDump.trim() + "\n" + displayDump.trim().take(1500)).trim(),
+                        )
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                    return@exec
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("Select display")
+                    .setItems(choices.map { it.label() }.toTypedArray()) { _, i -> useDisplay(choices[i]) }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            }
         }
+    }
+
+    private fun useDisplay(choice: DisplayParser.Choice) {
+        logicalField.setText(choice.logicalId.toString())
+        physicalField.setText(choice.physicalId.orEmpty())
+        // The very next capture must already use the new screen, not wait for the loop to read the field.
+        physicalIdSnapshot = choice.physicalId.orEmpty()
+        status.text = "Switching to ${choice.name}…"
+        restart()
     }
 
     private fun launchDialog() {
