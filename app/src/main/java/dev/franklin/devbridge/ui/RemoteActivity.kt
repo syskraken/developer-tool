@@ -22,8 +22,6 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import dev.franklin.devbridge.Session
-import dev.franklin.devbridge.server.ControlProtocol
-import dev.franklin.devbridge.server.InputServer
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.hypot
@@ -64,9 +62,6 @@ class RemoteActivity : AppCompatActivity() {
     private var surfaceReady = false
     private var liveStream: LiveStream? = null
     private var motionSupported = false
-
-    /** The helper running on the target phone; null while starting or if it could not start. */
-    @Volatile private var helper: InputServer? = null
 
     // touch state
     private enum class Touch { NONE, PENDING, DRAGGING }
@@ -147,7 +142,6 @@ class RemoteActivity : AppCompatActivity() {
         capture.execute {
             val connection = Session.connection ?: return@execute
             motionSupported = (connection.shell("getprop ro.build.version.sdk").trim().toIntOrNull() ?: 0) >= 31
-            Thread({ startHelper(connection) }, "helper-start").apply { isDaemon = true; start() }
             val bitmap = grabSnapshot() ?: run {
                 ui.post { status.text = "Could not read the screen. Is the phone unlocked or screen capture blocked?" }
                 return@execute
@@ -160,23 +154,8 @@ class RemoteActivity : AppCompatActivity() {
         }
     }
 
-    /** Copies and launches the on-phone helper; without it, input falls back to `input` commands. */
-    private fun startHelper(connection: dev.franklin.devbridge.adb.AdbConnection) {
-        if (helper?.isAlive == true) return
-        helper = null
-        try {
-            val started = InputServer.start(applicationContext, connection)
-            helper = started
-            ui.post { status.text = "Helper running on the phone (fast multi-touch input)" }
-        } catch (e: Exception) {
-            ui.post { status.text = "Helper unavailable (${e.message}); using slower shell input" }
-        }
-    }
-
     private fun restart() {
         stopLive()
-        helper?.close()
-        helper = null
         snapshotLoop = false
         deviceW = 0
         begin()
@@ -302,34 +281,7 @@ class RemoteActivity : AppCompatActivity() {
         return dx to dy
     }
 
-    /** With the helper, every finger is forwarded as it moves, so taps, drags, pinch and long-press all behave natively. */
-    private fun handleTouchWithHelper(helper: InputServer, event: MotionEvent): Boolean {
-        helper.displayId = logicalField.text.toString().trim().toIntOrNull() ?: 0
-        fun point(index: Int): Pair<Int, Int>? = toDevice(event.getX(index), event.getY(index))
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                val i = event.actionIndex
-                point(i)?.let { helper.touch(ControlProtocol.DOWN, event.getPointerId(i), it.first, it.second) }
-            }
-            MotionEvent.ACTION_MOVE -> for (i in 0 until event.pointerCount) {
-                point(i)?.let { helper.touch(ControlProtocol.MOVE, event.getPointerId(i), it.first, it.second) }
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                val i = event.actionIndex
-                point(i)?.let { helper.touch(ControlProtocol.UP, event.getPointerId(i), it.first, it.second) }
-            }
-            MotionEvent.ACTION_CANCEL -> for (i in 0 until event.pointerCount) {
-                point(i)?.let { helper.touch(ControlProtocol.UP, event.getPointerId(i), it.first, it.second) }
-            }
-        }
-        return true
-    }
-
     private fun handleTouch(event: MotionEvent) {
-        helper?.takeIf { it.isAlive }?.let {
-            handleTouchWithHelper(it, event)
-            return
-        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x; downY = event.y; downTime = event.eventTime
@@ -406,15 +358,7 @@ class RemoteActivity : AppCompatActivity() {
         }
     }
 
-    private fun key(code: Int) {
-        val h = helper?.takeIf { it.isAlive }
-        if (h != null) {
-            h.displayId = logicalField.text.toString().trim().toIntOrNull() ?: 0
-            h.key(code)
-        } else {
-            exec("input ${displayFlag()}keyevent $code")
-        }
-    }
+    private fun key(code: Int) = exec("input ${displayFlag()}keyevent $code")
 
     private fun wake() {
         exec("input keyevent 224")                          // WAKEUP
@@ -448,15 +392,8 @@ class RemoteActivity : AppCompatActivity() {
             .setTitle("Type text")
             .setView(field)
             .setPositiveButton("Send") { _, _ ->
-                val typed = field.text.toString()
-                val h = helper?.takeIf { it.isAlive }
-                if (typed.isNotEmpty() && h != null) {
-                    h.displayId = logicalField.text.toString().trim().toIntOrNull() ?: 0
-                    h.text(typed)
-                } else {
-                    val escaped = typed.replace("'", "'\\''").replace(" ", "%s")
-                    if (escaped.isNotEmpty()) exec("input text '$escaped'")
-                }
+                val escaped = field.text.toString().replace("'", "'\\''").replace(" ", "%s")
+                if (escaped.isNotEmpty()) exec("input text '$escaped'")
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
@@ -502,8 +439,6 @@ class RemoteActivity : AppCompatActivity() {
         snapshotLoop = false
         ui.removeCallbacksAndMessages(null)
         stopLive()
-        helper?.close()
-        helper = null
         input.shutdownNow()
         capture.shutdownNow()
         super.onDestroy()

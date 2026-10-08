@@ -8,7 +8,7 @@ You install DevBridge on a **working** phone (the controller) and connect it to 
 
 | Feature | How it works |
 |---|---|
-| **Remote control** | **Live video** like scrcpy: the phone's `screenrecord` H.264 stream is decoded in hardware and drawn in real time, with touches sent as you drag (Android 12+ gets true live dragging via `input motionevent`; older phones get taps and swipes when you lift). A small **helper** is copied to the phone and started automatically (see below) for fast multi-touch input. Falls back to screenshots if live video isn't available (**Live: off**). Works with a dead panel. Includes wake, lock-screen PIN entry, Back / Home / Recents / Power / volume, and text entry. |
+| **Remote control** | **Continuous live video** like scrcpy: the phone's `screenrecord` H.264 stream is decoded in hardware and drawn in real time, with no 3-minute cut-off (a second recording takes over before the first ends), with touches sent as you drag (Android 12+ gets true live dragging via `input motionevent`; older phones get taps and swipes when you lift). Falls back to screenshots if live video isn't available (**Live: off**). Works with a dead panel. Includes wake, lock-screen PIN entry, Back / Home / Recents / Power / volume, and text entry. |
 | **Flip cover screen** | Set the *input display* (usually `1`) and, optionally, the *screencap id*; **Detect** lists them. **Launch app** starts a package on that display (`am start --display`). Best-effort: it depends on the manufacturer allowing apps on the cover display. |
 | **Hardware check** | Model, Android/patch level, bootloader state, battery level/health/temperature, memory, storage, display, CPU, sensors, cameras/NFC/fingerprint/OTG, radios. Flags overheating, low storage, unlocked bootloader. |
 | **Permission analysis** | Reads the permissions each third-party app actually holds (`dumpsys package`) and scores them, calling out SMS, call log, microphone, background location, accessibility, device admin, install-apps and more. |
@@ -33,16 +33,10 @@ DevBridge cannot turn USB debugging on for a phone where it is off, and cannot b
 
 DevBridge only controls a phone that has explicitly authorised it (USB debugging enabled plus an accepted or imported key). Use it on devices you own or are permitted to manage. The audit features exist to help you find unwanted apps on your own phone.
 
-## The on-phone helper
-
-When you open Remote control, DevBridge copies its own APK to `/data/local/tmp` on the target and starts a helper from it with `app_process` over ADB — the same technique scrcpy uses. Nothing is installed, it runs with the same rights as `adb shell`, and it exits the moment you disconnect or close the screen. The helper injects touches, keys and text directly into Android's input system, so there is no per-event process start-up: fast, with real **multi-touch** (pinch, two-finger scroll) and proper text entry. If the helper can't start (very old Android, or a vendor build that blocks the hidden input API), DevBridge says why and falls back to the slower `input` commands.
-
-Video has no 3-minute limit: `screenrecord` stops itself after about three minutes, so DevBridge starts the next recording shortly before that and switches over at its first key frame.
-
 ## Limits
 
 - Live video still uses the phone's `screenrecord`, so it can't show protected content (some banking apps, DRM video), and after a rotation you need to tap **↻**. Two recordings overlap briefly at each hand-over, which a few phones may not allow; if so the picture pauses for about a second instead.
-- The helper depends on a hidden Android API that vendors occasionally change, so it can't be guaranteed on every phone. It is untested on real hardware as of this release.
+- Touch goes through Android's `input` command, which starts a process per event, so expect some lag (typically 100–300 ms) and no multi-touch or pinch. Nothing is installed or run on the target phone beyond standard Android tools.
 - Analysis relies on `dumpsys`/`pm` output, which varies between Android versions and manufacturers; sections degrade to "not reported" rather than failing.
 
 ## Building
