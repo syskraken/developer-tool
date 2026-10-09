@@ -70,6 +70,9 @@ object Aoa {
 class AoaSession(private val usb: ControlTransfer) : Closeable {
 
     private var registered = false
+
+    /** True once the mouse and keyboard have been registered with the phone and [close] has not run yet. */
+    val isOpen: Boolean get() = registered
     private var buttons = 0
 
     /** AOA protocol version the phone speaks; HID input needs 2. */

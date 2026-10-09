@@ -34,7 +34,7 @@ class ScriptActivity : AppCompatActivity() {
     private lateinit var editor: EditText
     private lateinit var log: TextView
     private lateinit var logScroll: ScrollView
-    private lateinit var scriptList: LinearLayout
+    private lateinit var scriptList: WrapLayout
     private lateinit var runButton: Button
 
     private var runner: ScriptRunner? = null
@@ -48,7 +48,7 @@ class ScriptActivity : AppCompatActivity() {
         val root = column(12)
         root.addView(label("Scripts", 22f, bold = true))
         status = label(
-            if (AoaHolder.session?.isAlive == true) "Connected to ${AoaHolder.label}." else "Not connected — open Touchpad & keyboard first.",
+            if (AoaHolder.session?.isOpen == true) "Connected to ${AoaHolder.label}." else "Not connected — open Touchpad & keyboard first.",
             13f,
         )
         root.spaced(status, 4)
@@ -196,7 +196,7 @@ class ScriptActivity : AppCompatActivity() {
         val result = checkSyntax()
         if (!result.isValid) return
         val session = AoaHolder.session
-        if (session == null || !session.isAlive) {
+        if (session == null || !session.isOpen) {
             toast("Not connected. Open Touchpad & keyboard first.")
             return
         }
@@ -231,7 +231,7 @@ class ScriptActivity : AppCompatActivity() {
 
     private fun runScript(parsed: ScriptEngine.ParseResult, values: Map<String, String>) {
         val session = AoaHolder.session
-        if (session == null || !session.isAlive) { toast("Not connected."); return }
+        if (session == null || !session.isOpen) { toast("Not connected."); return }
 
         val steps = if (values.isEmpty()) parsed.steps else substitute(parsed.steps, values)
         val runner = ScriptRunner(AoaScriptActions(session))
