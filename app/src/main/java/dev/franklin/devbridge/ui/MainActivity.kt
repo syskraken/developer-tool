@@ -397,27 +397,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startInput(device: UsbDevice) {
-        setStatus("Starting touchpad & keyboard…")
+        val startedAt = System.currentTimeMillis()
+        fun elapsed() = "%.1fs".format((System.currentTimeMillis() - startedAt) / 1000.0)
+        fun step(text: String) = setStatus("$text (${elapsed()} so far)")
+
+        step("Opening the USB device…")
         worker.execute {
             val manager = getSystemService(Context.USB_SERVICE) as UsbManager
             val connection = manager.openDevice(device)
             if (connection == null) {
-                setStatus("Could not open the USB device.")
+                setStatus("Could not open the USB device. (${elapsed()})")
                 return@execute
             }
+            step("USB device opened…")
             val control = UsbControl(connection)
             val session = AoaSession(control)
             try {
-                session.start()
+                session.start(onStep = { step(it) })
             } catch (e: Exception) {
                 control.close()
-                setStatus("Touchpad unavailable: ${e.message}")
+                setStatus("Touchpad unavailable after ${elapsed()}: ${e.message}")
                 return@execute
             }
             val name = device.productName ?: "USB device"
             AoaHolder.set(session, control, name)
             ui.post {
-                setStatus("Touchpad & keyboard ready for $name")
+                setStatus("Touchpad & keyboard ready for $name (took ${elapsed()})")
                 startActivity(Intent(this, TouchpadActivity::class.java))
             }
         }

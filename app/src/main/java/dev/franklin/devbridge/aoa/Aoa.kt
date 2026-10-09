@@ -83,11 +83,15 @@ class AoaSession(private val usb: ControlTransfer) : Closeable {
         return (reply[0].toInt() and 0xFF) or ((reply[1].toInt() and 0xFF) shl 8)
     }
 
+    /** [onStep] fires before each phase, so a slow phone shows which single step the time is going into. */
     @Synchronized
-    fun start() {
+    fun start(onStep: (String) -> Unit = {}) {
+        onStep("Asking the phone which accessory protocol it speaks…")
         val version = protocolVersion()
         if (version < 2) throw AoaException("This phone supports USB accessory version $version, but input needs version 2")
+        onStep("Registering the mouse…")
         register(Aoa.ID_MOUSE, Aoa.MOUSE_DESCRIPTOR)
+        onStep("Registering the keyboard…")
         register(Aoa.ID_KEYBOARD, Aoa.KEYBOARD_DESCRIPTOR)
         registered = true
     }
