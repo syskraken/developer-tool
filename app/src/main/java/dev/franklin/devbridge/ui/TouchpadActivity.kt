@@ -116,6 +116,7 @@ class TouchpadActivity : AppCompatActivity() {
                 ),
                 8,
             )
+            addView(button("Scripts") { startActivity(android.content.Intent(this@TouchpadActivity, ScriptActivity::class.java)) })
             addView(button("Done") { finish() })
         }
         panel = MaxHeightScrollView(this) { (resources.configuration.screenHeightDp * resources.displayMetrics.density * 0.5f).toInt() }

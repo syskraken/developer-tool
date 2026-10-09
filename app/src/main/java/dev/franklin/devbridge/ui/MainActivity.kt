@@ -130,10 +130,12 @@ class MainActivity : AppCompatActivity() {
         connect.spaced(label("USB cable (OTG)", 16f, bold = true), 20)
         connect.addView(button("Connect over USB") { chooseUsb(forInput = false) })
         connect.addView(button("Touchpad & keyboard (no USB debugging needed)") { chooseUsb(forInput = true) })
+        connect.addView(button("Scripts") { startActivity(Intent(this, ScriptActivity::class.java)) })
         connect.spaced(
             label(
                 "For a phone whose touch screen is dead: use this working phone as its mouse and keyboard to tap " +
-                    "Allow on the USB debugging prompt.",
+                    "Allow on the USB debugging prompt. Scripts replays a saved sequence of key presses blind, " +
+                    "for when you can't see the screen at all; connect Touchpad & keyboard first.",
                 12f,
             ),
             4,

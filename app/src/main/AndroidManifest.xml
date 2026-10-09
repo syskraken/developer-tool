@@ -31,6 +31,7 @@
             android:name=".ui.TouchpadActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density|uiMode" />
+        <activity android:name=".ui.ScriptActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ui.ReportActivity" android:exported="false" />
         <activity android:name=".ui.ShellActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
 
