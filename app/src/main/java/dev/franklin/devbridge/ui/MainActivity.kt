@@ -40,7 +40,12 @@ import java.util.concurrent.Executors
 class MainActivity : AppCompatActivity() {
 
     private val ui = Handler(Looper.getMainLooper())
-    private val worker = Executors.newSingleThreadExecutor()
+    // Separate executors: a slow ADB handshake (up to 90s waiting for the user to approve a
+    // prompt on the other phone) must never block Touchpad & keyboard or an update check from
+    // even starting, which is what happened when all of this shared one executor.
+    private val connectExecutor = Executors.newSingleThreadExecutor()
+    private val inputExecutor = Executors.newSingleThreadExecutor()
+    private val updateExecutor = Executors.newSingleThreadExecutor()
 
     private lateinit var status: TextView
     private lateinit var host: EditText
@@ -200,7 +205,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         unregisterReceiver(usbPermission)
-        worker.shutdownNow()
+        inputTicker?.let { ui.removeCallbacks(it) }
+        connectExecutor.shutdownNow()
+        inputExecutor.shutdownNow()
+        updateExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -276,7 +284,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         Updater.reset()
-        worker.execute { Updater.downloadAndInstall(applicationContext, release) }
+        updateExecutor.execute { Updater.downloadAndInstall(applicationContext, release) }
     }
 
     private fun runUpdateCheck(announce: Boolean) {
@@ -284,7 +292,7 @@ class MainActivity : AppCompatActivity() {
             updateButton.isEnabled = false
             updateButton.text = "Checking…"
         }
-        worker.execute {
+        updateExecutor.execute {
             val result = UpdateChecker.check(currentVersion())
             ui.post { applyUpdateResult(result, announce) }
         }
@@ -355,7 +363,7 @@ class MainActivity : AppCompatActivity() {
         getPreferences(MODE_PRIVATE).edit().putString("host", text).apply()
 
         setStatus("Connecting to $name:$port…")
-        worker.execute {
+        connectExecutor.execute {
             try {
                 finishConnect(AdbConnection(TcpTransport(name, port), Session.loadKey(this)), "$name:$port")
             } catch (e: Exception) {
@@ -396,16 +404,32 @@ class MainActivity : AppCompatActivity() {
         if (pendingInput) startInput(device) else connectUsb(device)
     }
 
+    private var inputTicker: Runnable? = null
+
     private fun startInput(device: UsbDevice) {
         val startedAt = System.currentTimeMillis()
         fun elapsed() = "%.1fs".format((System.currentTimeMillis() - startedAt) / 1000.0)
-        fun step(text: String) = setStatus("$text (${elapsed()} so far)")
+        var currentPhase = "Opening the USB device…"
+        fun render() = setStatus("$currentPhase (${elapsed()} so far)")
+        fun step(text: String) { currentPhase = text; render() }
+
+        // Ticks the elapsed time once a second so a genuinely slow phase is visibly counting up,
+        // rather than looking frozen — which is indistinguishable from the app having hung.
+        val ticker = object : Runnable {
+            override fun run() {
+                render()
+                ui.postDelayed(this, 1000)
+            }
+        }
+        inputTicker = ticker
+        ui.postDelayed(ticker, 1000)
 
         step("Opening the USB device…")
-        worker.execute {
+        inputExecutor.execute {
             val manager = getSystemService(Context.USB_SERVICE) as UsbManager
             val connection = manager.openDevice(device)
             if (connection == null) {
+                ui.post { ui.removeCallbacks(ticker); inputTicker = null }
                 setStatus("Could not open the USB device. (${elapsed()})")
                 return@execute
             }
@@ -416,12 +440,15 @@ class MainActivity : AppCompatActivity() {
                 session.start(onStep = { step(it) })
             } catch (e: Exception) {
                 control.close()
+                ui.post { ui.removeCallbacks(ticker); inputTicker = null }
                 setStatus("Touchpad unavailable after ${elapsed()}: ${e.message}")
                 return@execute
             }
             val name = device.productName ?: "USB device"
             AoaHolder.set(session, control, name)
             ui.post {
+                ui.removeCallbacks(ticker)
+                inputTicker = null
                 setStatus("Touchpad & keyboard ready for $name (took ${elapsed()})")
                 startActivity(Intent(this, TouchpadActivity::class.java))
             }
@@ -430,7 +457,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun connectUsb(device: UsbDevice) {
         setStatus("Connecting over USB…")
-        worker.execute {
+        connectExecutor.execute {
             try {
                 val manager = getSystemService(Context.USB_SERVICE) as UsbManager
                 val transport = UsbTransport.open(manager, device)
